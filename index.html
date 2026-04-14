@@ -719,13 +719,13 @@
       <div class="wallet-logo" style="background:#F6851B">🦊</div>
       MetaMask
     </div>
-    <div class="wallet-option" onclick="connectWallet('walletconnect')">
-      <div class="wallet-logo" style="background:#3B99FC">🔗</div>
-      WalletConnect
+    <div class="wallet-option" onclick="connectWallet('okx')">
+      <div class="wallet-logo" style="background:#000;border:1px solid #444;font-size:11px;color:#fff">OKX</div>
+      OKX Wallet
     </div>
-    <div class="wallet-option" onclick="connectWallet('coinbase')">
-      <div class="wallet-logo" style="background:#0052FF">🔵</div>
-      Coinbase Wallet
+    <div class="wallet-option" onclick="connectWallet('other')">
+      <div class="wallet-logo" style="background:#3B99FC">🔗</div>
+      Other Wallet
     </div>
     <div style="margin-top:12px; font-size:0.72rem; color:var(--muted); text-align:center; font-family:var(--mono)">
       Chain ID: 5042002 | Arc Network Testnet
@@ -1101,7 +1101,7 @@
           Arc App Kit Config
         </div>
         <div style="display:flex;flex-direction:column;gap:8px;font-size:0.75rem;font-family:var(--mono);color:var(--muted)">
-          <div style="display:flex;justify-content:space-between"><span>SDK</span><span style="color:var(--arc)">arc-appkit@1.0</span></div>
+          <div style="display:flex;justify-content:space-between"><span>SDK</span><span style="color:var(--arc)"><a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="79180b1a5418090912100d39485749">[email&#160;protected]</a></span></div>
           <div style="display:flex;justify-content:space-between"><span>Chain</span><span style="color:var(--text)">Arc Testnet</span></div>
           <div style="display:flex;justify-content:space-between"><span>Chain ID</span><span style="color:var(--text)">5042002</span></div>
           <div style="display:flex;justify-content:space-between"><span>RPC</span><span style="color:var(--text)">rpc.arc.io/testnet</span></div>
@@ -1119,7 +1119,7 @@
   <a href="#">View Source</a>
 </footer>
 
-<script>
+<script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
 // ─────────────── STATE ───────────────
 const state = {
   connected: false,
@@ -1186,48 +1186,113 @@ function closeWalletModal() {
   el('walletModal').classList.remove('open');
 }
 
-function connectWallet(type) {
+async function connectWallet(type) {
   closeWalletModal();
-  toast('Connecting to '+type+'...','info','🔌');
-  
-  setTimeout(() => {
+
+  const ARC_CHAIN = {
+    chainId: '0x4CC452',
+    chainName: 'Arc Network Testnet',
+    nativeCurrency: { name: 'ARC', symbol: 'ARC', decimals: 18 },
+    rpcUrls: ['https://rpc.arcnetwork.xyz'],
+    blockExplorerUrls: ['https://explorer.arcnetwork.xyz']
+  };
+
+  // Detect provider
+  let provider = null;
+  if(type === 'metamask') {
+    if(window.ethereum && window.ethereum.isMetaMask) provider = window.ethereum;
+    else if(window.ethereum?.providers) provider = window.ethereum.providers.find(p=>p.isMetaMask);
+  } else if(type === 'okx') {
+    provider = window.okxwallet || window.ethereum;
+  } else {
+    provider = window.ethereum;
+  }
+
+  if(!provider) {
+    toast('Wallet not detected! Install MetaMask/OKX first','error','✗');
+    return;
+  }
+
+  try {
+    toast('Requesting wallet access...','info','🔌');
+
+    // Request accounts
+    const accounts = await provider.request({ method: 'eth_requestAccounts' });
+    if(!accounts || accounts.length === 0) { toast('No accounts found','error','✗'); return; }
+
+    // Switch / add Arc Testnet
+    try {
+      await provider.request({ method: 'wallet_switchEthereumChain', params:[{ chainId: ARC_CHAIN.chainId }] });
+    } catch(switchErr) {
+      if(switchErr.code === 4902) {
+        try {
+          await provider.request({ method: 'wallet_addEthereumChain', params:[ARC_CHAIN] });
+        } catch(addErr) {
+          toast('Failed to add Arc Testnet: '+addErr.message,'error','✗'); return;
+        }
+      } else {
+        toast('Switch chain failed: '+switchErr.message,'error','✗'); return;
+      }
+    }
+
     state.connected = true;
-    // Generate fake address
-    state.address = '0x694e' + Array.from({length:36},()=>'0123456789abcdef'[Math.floor(Math.random()*16)]).join('').slice(0,36) + '13E3';
-    state.balances = {
-      ARC: parseFloat((Math.random()*500+50).toFixed(4)),
-      USDC: parseFloat((Math.random()*1000+100).toFixed(2)),
-      WETH: parseFloat((Math.random()*2+0.1).toFixed(6))
-    };
+    state.address = accounts[0];
+    state.provider = provider;
 
-    // Update UI
-    const btn = el('connectBtn');
-    btn.classList.add('connected');
-    el('connectDot').style.display = 'block';
-    const short = state.address.slice(0,6)+'...'+state.address.slice(-4);
-    el('connectLabel').textContent = short;
+    // Get real ETH/ARC balance
+    let arcBal = 0;
+    try {
+      const balHex = await provider.request({ method: 'eth_getBalance', params:[state.address, 'latest'] });
+      arcBal = parseInt(balHex, 16) / 1e18;
+    } catch(e){}
 
-    // Stats
-    const total = (state.balances.ARC * state.rates.ARC + state.balances.USDC + state.balances.WETH * state.rates.WETH).toFixed(2);
-    el('navBalance').textContent = '$'+parseFloat(total).toLocaleString();
-    el('navAddr').textContent = short;
+    state.balances = { ARC: parseFloat(arcBal.toFixed(4)), USDC: 0, WETH: 0 };
 
-    // Balances
-    el('fromBalance').textContent = state.balances[state.fromToken] || 0;
-    el('toBalance').textContent = state.balances[state.toToken] || 0;
-    el('liqBal1').textContent = state.balances.ARC;
-    el('liqBal2').textContent = state.balances.USDC;
-    el('bridgeBal').textContent = state.balances.USDC;
+    // Listen for account/chain changes
+    provider.on('accountsChanged', accs => { if(accs.length===0) disconnectWallet(); else { state.address=accs[0]; updateWalletUI(); } });
+    provider.on('chainChanged', () => window.location.reload());
 
-    // Portfolio tab
-    el('addressBox').textContent = state.address;
-    el('portfolioValue').textContent = '$'+parseFloat(total).toLocaleString();
-    el('walletPct').textContent = '100%';
-    el('poolPct').textContent = '0%';
+    updateWalletUI();
+    toast('Wallet connected! Arc Testnet active','success','✓');
 
-    renderTokenBalances();
-    toast('Wallet connected via '+type,'success','✓');
-  }, 1200);
+  } catch(err) {
+    if(err.code === 4001) toast('Connection rejected by user','error','✗');
+    else toast('Error: '+err.message,'error','✗');
+  }
+}
+
+function disconnectWallet() {
+  state.connected = false;
+  state.address = null;
+  const btn = el('connectBtn');
+  btn.classList.remove('connected');
+  el('connectDot').style.display = 'none';
+  el('connectLabel').textContent = 'Connect Wallet';
+}
+
+function updateWalletUI() {
+  const btn = el('connectBtn');
+  btn.classList.add('connected');
+  el('connectDot').style.display = 'block';
+  const short = state.address.slice(0,6)+'...'+state.address.slice(-4);
+  el('connectLabel').textContent = short;
+
+  const total = (state.balances.ARC * state.rates.ARC + state.balances.USDC + state.balances.WETH * state.rates.WETH).toFixed(2);
+  el('navBalance').textContent = '$'+parseFloat(total).toLocaleString();
+  el('navAddr').textContent = short;
+
+  el('fromBalance').textContent = state.balances[state.fromToken] || 0;
+  el('toBalance').textContent = state.balances[state.toToken] || 0;
+  el('liqBal1').textContent = state.balances.ARC;
+  el('liqBal2').textContent = state.balances.USDC;
+  el('bridgeBal').textContent = state.balances.USDC;
+
+  el('addressBox').textContent = state.address;
+  el('portfolioValue').textContent = '$'+parseFloat(total).toLocaleString();
+  el('walletPct').textContent = '100%';
+  el('poolPct').textContent = '0%';
+
+  renderTokenBalances();
 }
 
 function renderTokenBalances() {
@@ -1389,11 +1454,4 @@ function executeBridge() {
   const amt = parseFloat(el('bridgeAmt').value);
   if(!amt){ toast('Enter bridge amount','error','✗'); return; }
   toast('Bridge transaction submitted via CCTP','info','🌉');
-  setTimeout(()=> toast('Bridge initiated! ~15 min to destination','success','✓'), 2000);
-}
-
-// ─────────────── START ───────────────
-init();
-</script>
-</body>
-</html>
+  set
