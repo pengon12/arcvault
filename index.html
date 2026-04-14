@@ -1454,4 +1454,11 @@ function executeBridge() {
   const amt = parseFloat(el('bridgeAmt').value);
   if(!amt){ toast('Enter bridge amount','error','✗'); return; }
   toast('Bridge transaction submitted via CCTP','info','🌉');
-  set
+  Timeout(()=> toast('Bridge initiated! ~15 min to destination','success','✓'), 2000);
+}
+
+// ─────────────── START ───────────────
+init();
+</script>
+</body>
+</html>
